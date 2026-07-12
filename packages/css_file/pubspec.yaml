@@ -1,5 +1,5 @@
-name: sample_builder
-description: A sample build_runner.
+name: jaspr_css_file_builder
+description: Builder for Jaspr to extract styleRules and generate standalone static CSS files.
 version: 0.0.0
 
 environment:

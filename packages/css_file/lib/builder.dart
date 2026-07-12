@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:build/build.dart';
 
-Builder copyGeneratorBuilder(BuilderOptions options) => CopyGeneratorBuilder();
+Builder cssFileBuilder(BuilderOptions options) => CssFileBuilder();
 
-class CopyGeneratorBuilder implements Builder {
+class CssFileBuilder implements Builder {
   // 定義輸入與輸出的映射關係: 輸入 ".dart"，輸出 ".g.dart"
   @override
   final Map<String, List<String>> buildExtensions = const {
