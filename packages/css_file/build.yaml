@@ -1,0 +1,9 @@
+builders:
+  sample_builder:
+    import: "package:sample_builder/builder.dart"
+    builder_factories: ["copyGeneratorBuilder"]
+    build_extensions:
+      '.dart': ['.g.dart']
+    auto_apply: dependents
+    build_to: source
+

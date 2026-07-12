@@ -1,0 +1,16 @@
+name: sample_builder
+description: A sample build_runner.
+version: 0.0.0
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  analyzer: ^13.3.0
+  build: ^4.0.7
+  source_gen: ^4.2.3
+
+dev_dependencies:
+  build_test: ^3.5.16
+  lints: ^6.1.0
+  test: ^1.31.2
