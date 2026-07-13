@@ -256,10 +256,12 @@ final TypeChecker _styleRuleChecker = TypeChecker.typeNamed(
 
 /// 檢查對象是否為有效的 CSS 定義 (`List<StyleRule>`).
 /// 參考 [GitHub: schultek/jaspr][fn01].
+///
+/// 當元素類型不符預期時會以 `log.warning()` 輸出提示訊息.
 bool _checkIsValidStyleRule(Element element, String inputSystemPath) {
   if (element.enclosingElement case final ClassElement clazz
       when clazz.isPrivate || element.isPrivate) {
-    log.severe(
+    log.warning(
       '@CssFile cannot be used on private classes or members.'
       ' Failing element: ${clazz.name}.${element.name} in library $inputSystemPath.',
     );
@@ -267,13 +269,13 @@ bool _checkIsValidStyleRule(Element element, String inputSystemPath) {
   } else if (element.enclosingElement case final ClassElement clazz
       when (element is FieldElement && !element.isStatic) ||
           (element is GetterElement && !element.isStatic)) {
-    log.severe(
+    log.warning(
       '@CssFile cannot be used on non-static class members.'
       ' Failing element: ${clazz.name}.${element.name} in library $inputSystemPath.',
     );
     return false;
   } else if (element.isPrivate) {
-    log.severe(
+    log.warning(
       '@CssFile cannot be used on private variables or getters.'
       ' Failing element: ${element.name} in library $inputSystemPath.',
     );
@@ -295,7 +297,7 @@ bool _checkIsValidStyleRule(Element element, String inputSystemPath) {
       ClassElement(:final name) => '$name.',
       _ => '',
     };
-    log.severe(
+    log.warning(
       '@CssFile can only be applied on variables or getters of type List<StyleRule>.'
       ' Failing element: $prefix${element.name} with type $type in library ${element.library?.firstFragment.source.fullName}.',
     );
