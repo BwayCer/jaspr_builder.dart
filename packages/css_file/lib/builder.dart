@@ -31,8 +31,9 @@ List<String>? _getOutputPaths(BuilderOptions options, String field) {
 
 class CssFileBuilder implements Builder {
   late final List<String> _outputPaths;
+  final bool isTest;
 
-  CssFileBuilder({List<String>? outputPaths}) {
+  CssFileBuilder({List<String>? outputPaths, this.isTest = false}) {
     if (outputPaths == null) {
       log.severe(
         'The build_runner option "outputPaths" is required.'
@@ -87,7 +88,7 @@ class CssFileBuilder implements Builder {
 
       if (dartModule.infos.isEmpty) continue;
 
-      await _resolveCssOfCodeInfo(dartModule);
+      await _resolveCssOfCodeInfo(dartModule, isTest: isTest);
     }
 
     for (final cssModule in cssModuleCacheParty.values) {
@@ -330,11 +331,31 @@ _CodeInfo? _resolveElement(Element element, LineInfo lineInfo) {
 }
 
 /// 當 Dart 轉換 CSS 程式碼失敗時會以 `log.severe()` 輸出錯誤訊息.
-Future<void> _resolveCssOfCodeInfo(_DartModule dartModule) async {
+Future<void> _resolveCssOfCodeInfo(
+  _DartModule dartModule, {
+  required bool isTest,
+}) async {
   final infosToTransform = dartModule.infos;
-  final (error, cssResults) = await _transformCssBatch(
+
+  // 使用特殊的分隔符號，方便精準切分多個輸出結果. (相對於反序列化 JSON)
+  const separator = '===CSS_SEPARATOR_FOR_BUILD_RUNNER===';
+
+  var dartToCssCode = _generateTransformCssCode(
     dartModule.path,
     infosToTransform,
+    separator,
+  );
+  // NOTE:
+  // - build_test 的假資料無法使用腳本讀取
+  if (isTest) {
+    // stdout.write(dartToCssCode);
+    infosToTransform[0].cssCode = dartToCssCode;
+    return;
+  }
+
+  final (error, cssResults) = await _transformCssBatch(
+    dartToCssCode,
+    separator,
   );
 
   if (error != null) {
@@ -349,14 +370,11 @@ Future<void> _resolveCssOfCodeInfo(_DartModule dartModule) async {
   }
 }
 
-/// 批次轉換 CSS 方法: 一份 Dart 文件只跑一次行程，處理多個 [_CodeInfo].
-Future<(String? error, List<String>? cssResults)> _transformCssBatch(
+String _generateTransformCssCode(
   String dartModulePath,
   List<_CodeInfo> targets,
-) async {
-  // 使用特殊的分隔符號，方便後續精準切分多個 target 的輸出結果
-  const separator = '===CSS_SEPARATOR_FOR_BUILD_RUNNER===';
-
+  String separator,
+) {
   // 生成動態 Dart 程式碼
   // 透過 import 該 dartModulePath，並依序呼叫各個 `target.toCss()`.
   final buffer = StringBuffer();
@@ -378,6 +396,14 @@ Future<(String? error, List<String>? cssResults)> _transformCssBatch(
   );
   buffer.writeln("}");
 
+  return buffer.toString();
+}
+
+/// 批次轉換 CSS 方法: 一份 Dart 文件只跑一次行程，處理多個 [_CodeInfo].
+Future<(String? error, List<String>? cssResults)> _transformCssBatch(
+  String dartToCssCode,
+  String separator,
+) async {
   // 啟動 Dart 子行程
   // NOTE:
   // - 這邊指定的 `--packages` 會使用專案的第三方套件
@@ -389,7 +415,7 @@ Future<(String? error, List<String>? cssResults)> _transformCssBatch(
   ]);
 
   // 把生成的代碼寫入至標準輸入
-  process.stdin.write(buffer.toString());
+  process.stdin.write(dartToCssCode);
   await process.stdin.close();
 
   // 監聽並收集執行結果 (stdout 與 stderr)
