@@ -1,0 +1,9 @@
+builders:
+  css_file_builder:
+    import: "package:jaspr_css_file_builder/builder.dart"
+    builder_factories: ["cssFileBuilder"]
+    build_extensions:
+      r'$web$': ['.css']
+    auto_apply: dependents
+    build_to: source
+
