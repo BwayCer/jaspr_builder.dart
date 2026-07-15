@@ -3,6 +3,13 @@ import 'package:jaspr/jaspr.dart';
 
 import '../shared.dart';
 
+@appCssFile
+List<StyleRule> get circleRefChainStyles => [
+  css('.styleColor3').styles(
+    content: '1',
+  ),
+];
+
 class CircleRefChain3 extends StatelessComponent {
   final String classes;
 

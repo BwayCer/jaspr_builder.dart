@@ -4,6 +4,13 @@ import 'package:jaspr/jaspr.dart';
 import '../shared.dart';
 import './circle_refchain_x2.dart';
 
+@appCssFile
+List<StyleRule> get circleRefChainStyles => [
+  css('.styleColor1').styles(
+    content: '1',
+  ),
+];
+
 class CircleRefChain1 extends StatelessComponent {
   final String classes;
 
