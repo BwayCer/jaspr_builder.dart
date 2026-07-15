@@ -13,7 +13,7 @@ import './utils.dart';
 import './annotations.dart';
 
 Builder cssFileBuilder(BuilderOptions options) {
-  final outputPaths = _getOutputPaths(options, 'outputPaths');
+  final outputPaths = _getOutputPaths(options, 'output_paths');
   return CssFileBuilder(outputPaths: outputPaths);
 }
 
@@ -36,10 +36,10 @@ class CssFileBuilder implements Builder {
   CssFileBuilder({List<String>? outputPaths, this.isTest = false}) {
     if (outputPaths == null) {
       log.severe(
-        'The build_runner option "outputPaths" is required.'
+        'The build_runner option "output_paths" is required.'
         ' Please configure it in your build.yaml.',
       );
-      throw ArgumentError('Missing required config: "outputPaths"');
+      throw ArgumentError('Missing required config: "output_paths"');
     }
     _outputPaths = outputPaths;
   }
@@ -77,7 +77,7 @@ class CssFileBuilder implements Builder {
         if (!_outputPaths.contains(cssFilePath)) {
           log.warning(
             'The output path "$cssFilePath" is not allowed.'
-            ' Please add this path to the "outputPaths" option in your build.yaml.',
+            ' Please add this path to the "output_paths" option in your build.yaml.',
           );
           continue;
         }

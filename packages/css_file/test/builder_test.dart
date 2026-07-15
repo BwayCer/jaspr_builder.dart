@@ -145,7 +145,7 @@ void main() {
         anyElement(
           contains(
             'The output path "lib/user_tmpl.dart" is not allowed.'
-            ' Please add this path to the "outputPaths" option in your build.yaml.',
+            ' Please add this path to the "output_paths" option in your build.yaml.',
           ),
         ),
       );
