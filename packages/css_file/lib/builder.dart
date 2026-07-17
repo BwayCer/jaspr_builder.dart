@@ -12,8 +12,12 @@ import 'package:jaspr/dom.dart' show StyleRule;
 import './utils.dart';
 import './annotations.dart';
 
+Builder cssFileModuleBuilder(BuilderOptions options) {
+  return CssFileModuleBuilder();
+}
+
 Builder cssFileBuilder(BuilderOptions options) {
-  final outputPaths = _getOutputPaths(options, 'outputPaths');
+  final outputPaths = _getOutputPaths(options, 'output_paths');
   return CssFileBuilder(outputPaths: outputPaths);
 }
 
@@ -29,6 +33,59 @@ List<String>? _getOutputPaths(BuilderOptions options, String field) {
   return parsedPaths;
 }
 
+/// 用於 `dart run build_runner watch` 的測試開關
+const isActualTest = false;
+
+const cssfileExtension = '.styles.cssfile.txt';
+
+class CssFileModuleBuilder implements Builder {
+  final bool isTest;
+
+  /// 只在 dart 文件有變動時才會提取該文件和與其有引用關係文件的 `@CssFile` 並轉換成 CSS 程式碼.
+  CssFileModuleBuilder({this.isTest = false});
+
+  // 只在有變動時才更新, 且引用本文件的也會一起更新.
+  @override
+  Map<String, List<String>> buildExtensions = {
+    r'.dart': ['.styles.cssfile.txt'],
+  };
+
+  @override
+  Future<void> build(BuildStep buildStep) async {
+    final inputId = buildStep.inputId;
+
+    final dartModule = _DartModule(inputId.uri.toString());
+
+    if (isActualTest) print('[CssFileModuleBuilder] read ${dartModule.path}');
+    final matchCodeInfoStream = _matchCodeInfoStream(
+      buildStep,
+      inputId,
+      _checkCssFileType,
+    );
+    await for (final _MatchCodeInfo(:cssFilePath, :codeInfo)
+        in matchCodeInfoStream) {
+      dartModule.add(cssFilePath, codeInfo);
+    }
+
+    if (dartModule.infosList.isEmpty) return;
+    if (isActualTest) print('[CssFileModuleBuilder] update ${dartModule.path}');
+
+    final dartModuleContent = await _serializeAndResolveCss(
+      dartModule,
+      isTest: isTest,
+    );
+    if (dartModuleContent == null) return;
+
+    final outputId = inputId.changeExtension(cssfileExtension);
+    await buildStep.writeAsString(outputId, dartModuleContent);
+  }
+
+  final _checkCssFileType = createTypeChecker(
+    CssFile,
+    inPackage: 'jaspr_css_file_builder',
+  );
+}
+
 class CssFileBuilder implements Builder {
   late final List<String> _outputPaths;
   final bool isTest;
@@ -36,10 +93,10 @@ class CssFileBuilder implements Builder {
   CssFileBuilder({List<String>? outputPaths, this.isTest = false}) {
     if (outputPaths == null) {
       log.severe(
-        'The build_runner option "outputPaths" is required.'
+        'The build_runner option "output_paths" is required.'
         ' Please configure it in your build.yaml.',
       );
-      throw ArgumentError('Missing required config: "outputPaths"');
+      throw ArgumentError('Missing required config: "output_paths"');
     }
     _outputPaths = outputPaths;
   }
@@ -51,113 +108,353 @@ class CssFileBuilder implements Builder {
   @override
   Map<String, List<String>> get buildExtensions => {r'$web$': _outputPaths};
 
-  // NOTE:
-  // - 目前沒有檢查到有更新才重建的功能, 這對 `dart run build_runner watch` 不友善.
-  //   對於每份文件都讀取內容紀錄 Hash 變更是乎更加不友善. 不過還不知道如何檢查元素
-  //   是否有外部引用.
-  //   當實作此功能時 [DartModule], [_CodeInfo] 或許能為其提供工作空間.
   @override
   Future<void> build(BuildStep buildStep) async {
-    final cssModuleCacheParty = _CssModuleCacheParty();
+    final dartInputIdMap = <String, AssetId>{};
+    final schedule = _DartToCssSchedule(isTest: isTest || isActualTest);
 
-    final assetGlob = Glob('lib/**.dart');
+    final assetGlob = Glob('lib/**$cssfileExtension');
+    // 反序列化 #1: 取得 metadata
     await for (final inputId in buildStep.findAssets(assetGlob)) {
-      final inputPath = inputId.path; // `lib/...`
-      final dartModule = _DartModule(
-        'package:${inputId.package}/${inputPath.substring(4)}',
-      );
+      // 只讀取第一行
+      final bytes = await buildStep.readAsBytes(inputId);
+      final firstLine = await Stream.value(bytes)
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .first
+          .catchError((_) => '');
 
-      final matchCodeInfoStream = _matchCodeInfoStream(
-        buildStep,
-        inputId,
-        _checkCssFileType,
-      );
-      await for (final _MatchCodeInfo(:cssFilePath, :codeInfo)
-          in matchCodeInfoStream) {
-        if (!_outputPaths.contains(cssFilePath)) {
-          log.warning(
-            'The output path "$cssFilePath" is not allowed.'
-            ' Please add this path to the "outputPaths" option in your build.yaml.',
-          );
-          continue;
-        }
-
-        dartModule.add(codeInfo);
-        cssModuleCacheParty.add(cssFilePath, codeInfo);
-      }
-
-      if (dartModule.infos.isEmpty) continue;
-
-      await _resolveCssOfCodeInfo(dartModule, isTest: isTest);
+      if (isTest) print('[CssFileBuilder] read json: $firstLine');
+      final parsedJson = jsonDecode(firstLine) as Map<String, Object?>;
+      final dartModule = _DartModule.deserialize(parsedJson);
+      dartInputIdMap[dartModule.path] = inputId;
+      schedule.addDartModule(dartModule);
     }
 
-    for (final cssModule in cssModuleCacheParty.values) {
-      final cssCode = cssModule.infos
-          .map((item) => item.cssCode)
-          .whereType<String>()
-          .join('\n');
+    await for (final _ScheduleResult(:mode, :path, :codeInfos)
+        in schedule.plan()) {
+      if (isTest || isActualTest) print('[CssFileBuilder] $mode "$path"');
+      switch (mode) {
+        case _ScheduleMode.read:
+          final inputId = dartInputIdMap[path]!;
+          final content = await buildStep.readAsString(inputId);
 
-      final cssContent =
-          '/* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */'
-          '\n\n$cssCode';
+          // 反序列化 #2: 取得 CSS 程式碼
+          final cssCodes = content.split(_cssSeparator).skip(1).toList();
+          if (isTest) {
+            print(
+              '[CssFileBuilder] read "$path" content:\n${cssCodes.join('\n')}',
+            );
+          }
+          schedule.addCssCode(path, cssCodes);
+          break;
 
-      final outputId = AssetId(
-        buildStep.inputId.package,
-        'web/${cssModule.path}',
-      );
-      await buildStep.writeAsString(outputId, cssContent.trimRight());
+        case _ScheduleMode.write:
+          if (!_outputPaths.contains(path)) {
+            log.warning(
+              'The output path "$path" is not allowed.'
+              ' Please add this path to the "output_paths" option in your build.yaml.',
+            );
+            continue;
+          }
+
+          // 比較 enum 的 index, 較小的排前面.
+          codeInfos!.sort(
+            (a, b) => a.category.index.compareTo(b.category.index),
+          );
+          final cssCode = codeInfos
+              .map((item) => item.cssCode)
+              .whereType<String>()
+              .join('\n');
+          final cssContent =
+              '/* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */'
+              '\n\n$cssCode';
+
+          final outputId = AssetId(buildStep.inputId.package, 'web/$path');
+          await buildStep.writeAsString(outputId, cssContent.trimRight());
+          break;
+      }
     }
   }
+}
 
-  final _checkCssFileType = createTypeChecker(
-    CssFile,
-    inPackage: 'jaspr_css_file_builder',
-  );
+enum _ElementTypeCategory {
+  topLevelVariable, // index = 0
+  classElement, // index = 1
+  other, // index = 2
 }
 
 class _CodeInfo {
+  final _ElementTypeCategory category;
   final String target;
   int line;
   int column;
   String? cssCode;
 
-  _CodeInfo(this.target, this.line, this.column);
-}
+  _CodeInfo(this.category, this.target, this.line, this.column);
 
-class _DartModule {
-  final String path;
-  final List<_CodeInfo> infos = [];
-
-  _DartModule(this.path);
-
-  void add(_CodeInfo codeInfo) {
-    infos.add(codeInfo);
+  factory _CodeInfo.deserialize(Map<String, Object?> json) {
+    return _CodeInfo(
+      switch (json['category'] as int) {
+        0 => _ElementTypeCategory.topLevelVariable,
+        1 => _ElementTypeCategory.classElement,
+        _ => _ElementTypeCategory.other,
+      },
+      json['target'] as String,
+      json['line'] as int,
+      json['column'] as int,
+    );
   }
-}
 
-class _CssModule {
-  final String path;
-  final List<_CodeInfo> infos = [];
-
-  _CssModule(this.path);
-
-  void add(_CodeInfo codeInfo) {
-    infos.add(codeInfo);
+  Map<String, dynamic> serialize() {
+    return {
+      'category': category.index,
+      'target': target,
+      'line': line,
+      'column': column,
+    };
   }
 }
 
 class _CssModuleCacheParty {
-  final Map<String, _CssModule> _rooms = {};
+  final Map<String, List<_CodeInfo>> _rooms = {};
 
-  _CssModule getOrCreateRoom(String roomId) {
+  List<_CodeInfo> getOrCreateRoom(String roomId) {
     // `.putIfAbsent()` 如果找不到 key，會執行第二函式參數直接創建, 插入並回傳, 效率優於 `.containsKey()`.
-    return _rooms.putIfAbsent(roomId, () => _CssModule(roomId));
+    return _rooms.putIfAbsent(roomId, () => []);
   }
 
-  Iterable<_CssModule> get values => _rooms.values;
+  Iterable<List<_CodeInfo>> get values => _rooms.values;
 
   void add(String path, _CodeInfo codeInfo) {
     getOrCreateRoom(path).add(codeInfo);
+  }
+
+  void addAll(String path, List<_CodeInfo> codeInfos) {
+    getOrCreateRoom(path).addAll(codeInfos);
+  }
+
+  List<_CodeInfo>? removeRoom(String roomId) => _rooms.remove(roomId);
+}
+
+class _DartModule extends _CssModuleCacheParty {
+  final String path;
+  final List<String> cssPaths = [];
+  final List<List<_CodeInfo>> infosList = [];
+
+  _DartModule(this.path);
+
+  factory _DartModule.deserialize(Map<String, Object?> json) {
+    final dartModule = _DartModule(json['path'] as String);
+
+    final cssPathsJson = json['cssPaths'] as List<dynamic>?;
+    if (cssPathsJson != null) {
+      dartModule.cssPaths.addAll(cssPathsJson.cast<String>());
+    }
+
+    final infosListJson = json['infosList'] as List<dynamic>?;
+    if (infosListJson != null) {
+      final parsedList = infosListJson.map<List<_CodeInfo>>((infos) {
+        return (infos as List<dynamic>).map<_CodeInfo>((item) {
+          return _CodeInfo.deserialize(item as Map<String, Object?>);
+        }).toList();
+      }).toList();
+
+      dartModule.infosList.addAll(parsedList);
+    }
+
+    return dartModule;
+  }
+
+  Map<String, dynamic> serialize() {
+    return {
+      'path': path,
+      'cssPaths': cssPaths,
+      'infosList': infosList.map((item) {
+        return item.map((info) => info.serialize()).toList();
+      }).toList(),
+    };
+  }
+
+  List<_CodeInfo> get infos => infosList.expand((list) => list).toList();
+
+  @override
+  List<_CodeInfo> getOrCreateRoom(String roomId) {
+    return _rooms.putIfAbsent(roomId, () {
+      final list = <_CodeInfo>[];
+      cssPaths.add(roomId);
+      infosList.add(list);
+      return list;
+    });
+  }
+}
+
+class _AssociatedGroupInfo {
+  // 關聯的 dartPath 路徑列表
+  final List<String> associatedList = [];
+  // 屬於此組合的 cssPath 列表
+  final List<String> groups = [];
+  int remainedNodeCount = 0;
+}
+
+enum _ScheduleMode { read, write }
+
+class _ScheduleResult {
+  final _ScheduleMode mode;
+  final String path;
+  List<_CodeInfo>? codeInfos;
+
+  _ScheduleResult(this.mode, this.path);
+}
+
+class _DartToCssSchedule {
+  final bool isTest;
+
+  final Map<String, _DartModule> _dartModuleInfo = {};
+
+  // 儲存 _CodeInfo  節點數資訊. Key 格式為: "dart_$dartPath", "css_${cssPath}"
+  final Map<String, int> _nodeCountInfo = {};
+
+  // 記錄每個 cssPath 關聯了哪些 dartPath 路徑
+  final Map<String, List<String>> _associatedInfoMap = {};
+
+  final List<_AssociatedGroupInfo> _associatedGroupInfos = [];
+
+  final _cssModuleCacheParty = _CssModuleCacheParty();
+
+  /// 假設每個 [_CodeInfo] 節點佔用一樣的大小.
+  /// 一份 Dart 文件可以包含多份 CSS 文件; 一份 CSS 文件可能散落於多分 Dart 文件中.
+  /// 計算與該 CSS 關聯的 Dart 所有的節點數扣除該 CSS 的自身的節點數後排序, 用此找出佔用記憶體最少的排程規劃.
+  _DartToCssSchedule({this.isTest = false});
+
+  /// 當 CSS 路徑數量與程式碼資訊數量不相等時會忽略該 Dart 文件結果並以
+  /// `log.warning()` 輸出提示訊息.
+  void addDartModule(_DartModule dartModule) {
+    final dartPath = dartModule.path;
+    int totalNodeCount = 0;
+
+    if (dartModule.cssPaths.length != dartModule.infosList.length) {
+      log.warning(
+        'Multi-build conversion failed (${dartModule.path}): CSS path and node data loss.',
+      );
+      return;
+    }
+
+    for (int idx = 0; idx < dartModule.cssPaths.length; idx++) {
+      final cssPath = dartModule.cssPaths[idx];
+      final codeInfos = dartModule.infosList[idx];
+
+      _associatedInfoMap.putIfAbsent(cssPath, () => []).add(dartPath);
+      _cssModuleCacheParty.addAll(cssPath, codeInfos);
+
+      // 記錄 cssPath 在此 Dart 文件的 _CodeInfo 節點數
+      final cssNodeCount = codeInfos.length;
+      _nodeCountInfo.update(
+        'css_$cssPath',
+        (int value) => value + cssNodeCount,
+        ifAbsent: () => cssNodeCount,
+      );
+      totalNodeCount += cssNodeCount;
+    }
+
+    _dartModuleInfo[dartPath] = dartModule;
+    // 記錄 Dart 文件的 _CodeInfo 總節點數
+    _nodeCountInfo['dart_$dartPath'] = totalNodeCount;
+  }
+
+  /// 當 CSS 資訊數量與程式碼內容數量不相等時會忽略該 Dart 文件結果並以
+  /// `log.warning()` 輸出提示訊息.
+  void addCssCode(String dartPath, List<String> cssCodes) {
+    // 讓 _CodeInfo 只被 _cssModuleCacheParty 引用. 並在 [plan] 後清除記憶體佔用.
+    final dartModule = _dartModuleInfo.remove(dartPath)!;
+    final codeInfos = dartModule.infos;
+
+    if (codeInfos.length != cssCodes.length) {
+      log.warning(
+        'Multi-build conversion failed (${dartModule.path}): CSS code data lost.',
+      );
+      return;
+    }
+
+    // 依序將轉換結果填回 CodeInfo
+    for (var idx = 0; idx < codeInfos.length; idx++) {
+      codeInfos[idx].cssCode = cssCodes[idx];
+    }
+  }
+
+  void _resolveGroupInfos() {
+    final Map<String, _AssociatedGroupInfo> associatedGroupInfoMap = {};
+
+    for (final MapEntry(key: cssPath, value: dartPaths)
+        in _associatedInfoMap.entries) {
+      final signature = dartPaths.join('|');
+
+      final info = associatedGroupInfoMap.putIfAbsent(
+        signature,
+        () => _AssociatedGroupInfo()..associatedList.addAll(dartPaths),
+      );
+
+      info.groups.add(cssPath);
+    }
+
+    // 計算以群組為單位之扣除後的剩餘節點數
+    for (final info in associatedGroupInfoMap.values) {
+      var groupExternalCount = 0;
+      for (final dartPath in info.associatedList) {
+        groupExternalCount += _nodeCountInfo['dart_$dartPath'] ?? 0;
+      }
+      for (final cssPath in info.groups) {
+        groupExternalCount -= _nodeCountInfo['css_$cssPath'] ?? 0;
+      }
+      info.remainedNodeCount = groupExternalCount;
+
+      if (isTest) {
+        var groupCount = 0;
+        for (final cssPath in info.groups) {
+          groupCount += _nodeCountInfo['css_$cssPath'] ?? 0;
+        }
+        print(
+          '[CssFileBuilder] sorting info:\n'
+          '  groups: ${info.groups}\n'
+          '  associatedList: ${info.associatedList}\n'
+          '  selfNode: $groupCount\n'
+          '  otherNode: $groupExternalCount',
+        );
+      }
+    }
+
+    // 依 remainedNodeCount 由少到多排序
+    _associatedGroupInfos.addAll(
+      associatedGroupInfoMap.values.toList()
+        ..sort((a, b) => a.remainedNodeCount.compareTo(b.remainedNodeCount)),
+    );
+  }
+
+  var _isFirstRun = true;
+
+  Stream<_ScheduleResult> plan() async* {
+    if (_isFirstRun) {
+      _isFirstRun = false;
+      _resolveGroupInfos();
+    }
+
+    if (_associatedGroupInfos.isEmpty) return;
+
+    final completedReadList = [];
+    for (final associatedGroupInfo in _associatedGroupInfos) {
+      for (final dartPath in associatedGroupInfo.associatedList) {
+        if (completedReadList.contains(dartPath)) continue;
+
+        completedReadList.add(dartPath);
+        yield _ScheduleResult(_ScheduleMode.read, dartPath);
+      }
+
+      for (final cssPath in associatedGroupInfo.groups) {
+        // 清除已完成讀取的 _CodeInfo 的記憶體佔用
+        yield _ScheduleResult(_ScheduleMode.write, cssPath)
+          ..codeInfos = _cssModuleCacheParty.removeRoom(cssPath);
+      }
+    }
   }
 }
 
@@ -182,36 +479,70 @@ Stream<_MatchCodeInfo> _matchCodeInfoStream(
   final unit = await buildStep.resolver.compilationUnitFor(inputId);
   final lineInfo = unit.lineInfo;
 
+  // NOTE:
+  // library 只在此處被創建, 因此把 `library.firstFragment.source.fullName` 改為通用的
+  // `inputId`.
+  final inputLibraryFullPath = '/${inputId.package}/${inputId.path}';
+
   // 初始的候選元素: 所有的 `class` 和全域變數
-  // 參考 [GitHub: schultek/jaspr][fn01]
-  final elementList = [...library.topLevelVariables, ...library.classes]
-      .expand<Element>(
+  // 關於 elementList 是參考 [GitHub: schultek/jaspr][fn01]
+  final elementInfos = [
+    (
+      _ElementTypeCategory.topLevelVariable,
+      library.topLevelVariables.expand<Element>(
         (e) => switch (e) {
-          final ClassElement e => [...e.fields, ...e.getters],
           final TopLevelVariableElement e when e.isOriginDeclaration => [e],
           TopLevelVariableElement(:final getter?) when e.isOriginGetterSetter =>
             [getter],
           _ => [],
         },
+      ),
+    ),
+    (
+      _ElementTypeCategory.classElement,
+      library.classes.expand<Element>(
+        (e) => switch (e) {
+          final ClassElement e => [...e.fields, ...e.getters],
+        },
+      ),
+    ),
+  ];
+  for (final (category, elementList) in elementInfos) {
+    for (final element in elementList) {
+      final matchCodeInfo = _matchCodeInfo(
+        category,
+        element,
+        checkCssFileType,
+        lineInfo,
+        inputLibraryFullPath,
       );
-
-  final inputSystemPath = library.firstFragment.source.fullName;
-
-  for (final element in elementList) {
-    final cssFile = _matchCssFileAnnotation(
-      element,
-      checkCssFileType,
-      inputSystemPath,
-    );
-    if (cssFile == null) continue;
-
-    if (!_checkIsValidStyleRule(element, inputSystemPath)) continue;
-
-    final codeInfo = _resolveElement(element, lineInfo);
-    if (codeInfo == null) continue;
-
-    yield _MatchCodeInfo(cssFile.path, codeInfo);
+      if (matchCodeInfo != null) {
+        yield matchCodeInfo;
+      }
+    }
   }
+}
+
+_MatchCodeInfo? _matchCodeInfo(
+  _ElementTypeCategory category,
+  Element element,
+  CheckIsTargetType checkCssFileType,
+  LineInfo lineInfo,
+  String inputLibraryFullPath,
+) {
+  final cssFile = _matchCssFileAnnotation(
+    element,
+    checkCssFileType,
+    inputLibraryFullPath,
+  );
+  if (cssFile == null) return null;
+
+  if (!_checkIsValidStyleRule(element, inputLibraryFullPath)) return null;
+
+  final codeInfo = _resolveElement(category, element, lineInfo);
+  if (codeInfo == null) return null;
+
+  return _MatchCodeInfo(cssFile.path, codeInfo);
 }
 
 /// 以 [checkCssFileType] 方法過濾註解, 並將其還原成 [CssFile].
@@ -220,7 +551,7 @@ Stream<_MatchCodeInfo> _matchCodeInfoStream(
 CssFile? _matchCssFileAnnotation(
   Element element,
   CheckIsTargetType checkCssFileType,
-  String inputSystemPath,
+  String inputLibraryFullPath,
 ) {
   final annotations = element.metadata.annotations;
 
@@ -241,7 +572,7 @@ CssFile? _matchCssFileAnnotation(
 
     log.warning(
       '@CssFile has not file path.'
-      ' Failing element:$elementTarget in library $inputSystemPath.',
+      ' Failing element:$elementTarget in library $inputLibraryFullPath.',
     );
     return null;
   }
@@ -258,12 +589,12 @@ final TypeChecker _styleRuleChecker = TypeChecker.typeNamed(
 /// 參考 [GitHub: schultek/jaspr][fn01].
 ///
 /// 當元素類型不符預期時會以 `log.warning()` 輸出提示訊息.
-bool _checkIsValidStyleRule(Element element, String inputSystemPath) {
+bool _checkIsValidStyleRule(Element element, String inputLibraryFullPath) {
   if (element.enclosingElement case final ClassElement clazz
       when clazz.isPrivate || element.isPrivate) {
     log.warning(
       '@CssFile cannot be used on private classes or members.'
-      ' Failing element: ${clazz.name}.${element.name} in library $inputSystemPath.',
+      ' Failing element: ${clazz.name}.${element.name} in library $inputLibraryFullPath.',
     );
     return false;
   } else if (element.enclosingElement case final ClassElement clazz
@@ -271,13 +602,13 @@ bool _checkIsValidStyleRule(Element element, String inputSystemPath) {
           (element is GetterElement && !element.isStatic)) {
     log.warning(
       '@CssFile cannot be used on non-static class members.'
-      ' Failing element: ${clazz.name}.${element.name} in library $inputSystemPath.',
+      ' Failing element: ${clazz.name}.${element.name} in library $inputLibraryFullPath.',
     );
     return false;
   } else if (element.isPrivate) {
     log.warning(
       '@CssFile cannot be used on private variables or getters.'
-      ' Failing element: ${element.name} in library $inputSystemPath.',
+      ' Failing element: ${element.name} in library $inputLibraryFullPath.',
     );
     return false;
   }
@@ -308,7 +639,11 @@ bool _checkIsValidStyleRule(Element element, String inputSystemPath) {
 }
 
 // 從 [element] 解析出 [_CodeInfo] 的訊息.
-_CodeInfo? _resolveElement(Element element, LineInfo lineInfo) {
+_CodeInfo? _resolveElement(
+  _ElementTypeCategory category,
+  Element element,
+  LineInfo lineInfo,
+) {
   String targetName;
   if (element.enclosingElement case final ClassElement clazz) {
     targetName = '${clazz.name}.${element.name}';
@@ -326,50 +661,46 @@ _CodeInfo? _resolveElement(Element element, LineInfo lineInfo) {
   final location = lineInfo.getLocation(element.firstFragment.nameOffset ?? 0);
 
   return _CodeInfo(
+    category,
     targetName,
     location.lineNumber,
     location.columnNumber,
   );
 }
 
+// 使用特殊的分隔符號，方便精準切分多個輸出結果. (相對於反序列化 JSON)
+const _cssSeparator = '===CSS_SEPARATOR_FOR_BUILD_RUNNER===';
+
 /// 當 Dart 轉換 CSS 程式碼失敗時會以 `log.severe()` 輸出錯誤訊息.
-Future<void> _resolveCssOfCodeInfo(
+Future<String?> _serializeAndResolveCss(
   _DartModule dartModule, {
   required bool isTest,
 }) async {
+  final metadata = jsonEncode(dartModule.serialize());
   final infosToTransform = dartModule.infos;
-
-  // 使用特殊的分隔符號，方便精準切分多個輸出結果. (相對於反序列化 JSON)
-  const separator = '===CSS_SEPARATOR_FOR_BUILD_RUNNER===';
 
   var dartToCssCode = _generateTransformCssCode(
     dartModule.path,
     infosToTransform,
-    separator,
+    _cssSeparator,
   );
   // NOTE:
   // - build_test 的假資料無法使用腳本讀取
   if (isTest) {
-    // stdout.write(dartToCssCode);
-    infosToTransform[0].cssCode = dartToCssCode;
-    return;
+    return '$metadata\n$_cssSeparator\n$dartToCssCode';
   }
 
-  final (error, cssResults) = await _transformCssBatch(
+  final (error, outputText) = await _transformCssBatch(
     dartToCssCode,
-    separator,
+    _cssSeparator,
   );
 
   if (error != null) {
     log.severe('CSS transform failed (${dartModule.path}): $error');
-  } else if (cssResults!.length != infosToTransform.length) {
-    log.severe('CSS transform failed (${dartModule.path}): data lost.');
-  } else {
-    // 依序將轉換結果填回 CodeInfo
-    for (var idx = 0; idx < infosToTransform.length; idx++) {
-      infosToTransform[idx].cssCode = cssResults[idx];
-    }
+    return null;
   }
+
+  return '$metadata\n$_cssSeparator$outputText';
 }
 
 String _generateTransformCssCode(
@@ -396,13 +727,13 @@ String _generateTransformCssCode(
   buffer.writeln(
     "  return styleRules.map((item) => item.toCss()).join('\\n');",
   );
-  buffer.writeln("}");
+  buffer.write("}");
 
   return buffer.toString();
 }
 
 /// 批次轉換 CSS 方法: 一份 Dart 文件只跑一次行程，處理多個 [_CodeInfo].
-Future<(String? error, List<String>? cssResults)> _transformCssBatch(
+Future<(String? error, String? outputText)> _transformCssBatch(
   String dartToCssCode,
   String separator,
 ) async {
@@ -433,11 +764,8 @@ Future<(String? error, List<String>? cssResults)> _transformCssBatch(
     return (errors.join().trim(), null);
   }
 
-  // 解析標準輸出，並用分隔符號拆回各個 [_CodeInfo] 的 CSS 內容
   final totalOutput = outputs.join().trim();
-  final cssList = totalOutput.split(separator);
-
-  return (null, cssList);
+  return (null, totalOutput);
 }
 
 // Footnote:
