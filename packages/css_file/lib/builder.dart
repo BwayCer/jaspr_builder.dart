@@ -769,4 +769,7 @@ Future<(String? error, String? outputText)> _transformCssBatch(
 }
 
 // Footnote:
-// [fn01]: https://github.com/schultek/jaspr/blob/e4cc9d1/packages/jaspr_builder/lib/src/styles/styles_module_builder.dart#L50
+// [fn01]:
+//   Reference from: https://github.com/schultek/jaspr/blob/e4cc9d1/packages/jaspr_builder/lib/src/styles/styles_module_builder.dart#L50
+//   Copyright (c) 2025 The Jaspr Authors.
+//   Licensed under the MIT License.
