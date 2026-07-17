@@ -56,3 +56,25 @@ class App extends StatelessComponent {
     ]),
   ];
 }
+
+// Generator "web/styles/app.css"
+// ```css
+// /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
+//
+// .main {
+//   display: flex;
+//   flex-direction: row;
+// }
+// @media screen and (max-width: 600px) {
+//   .main {
+//     flex-direction: column;
+//   }
+// }
+// .main {
+//   width: 100px;
+//   padding: 10rem;
+// }
+// .main p {
+//   color: blue;
+// }
+// ```
