@@ -1,0 +1,9 @@
+targets:
+  $default:
+    builders:
+      jaspr_css_file_builder|css_file_builder:
+        options:
+          output_paths:
+            - styles/app.css
+            - styles/components.css
+            - styles/deferred.css

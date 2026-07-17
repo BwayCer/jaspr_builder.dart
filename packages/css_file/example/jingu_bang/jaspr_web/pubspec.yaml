@@ -1,0 +1,24 @@
+name: jaspr_web
+description: A new Jaspr project
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.12.2 <4.0.0"
+
+dependencies:
+  jaspr: ^0.23.2
+  jaspr_css_file_builder:
+    path: ../../..
+  other_components:
+    path: ../other_components
+  universal_web: ^1.1.1+1
+
+dev_dependencies:
+  build_runner: ^2.10.0
+  build_web_compilers: ^4.8.0
+  jaspr_builder: ^0.23.2
+  lints: ^5.0.0
+
+jaspr:
+  mode: static
