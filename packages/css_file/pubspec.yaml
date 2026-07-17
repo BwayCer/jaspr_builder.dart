@@ -1,9 +1,17 @@
 name: jaspr_css_file_builder
 description: Builder for Jaspr to extract styleRules and generate standalone static CSS files.
-version: 0.0.0
+version: 1.0.0
+repository: https://github.com/BwayCer/jaspr_builder.dart
+issue_tracker: https://github.com/BwayCer/jaspr_builder.dart/issues
 
 environment:
   sdk: ^3.12.2
+
+topics:
+  - jaspr
+  - web
+  - css
+  - build-runner
 
 dependencies:
   analyzer: ^12.1.0
