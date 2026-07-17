@@ -157,7 +157,11 @@ class CssFileBuilder implements Builder {
             continue;
           }
 
-          final cssCode = codeInfos!
+          // 比較 enum 的 index, 較小的排前面.
+          codeInfos!.sort(
+            (a, b) => a.category.index.compareTo(b.category.index),
+          );
+          final cssCode = codeInfos
               .map((item) => item.cssCode)
               .whereType<String>()
               .join('\n');
@@ -173,16 +177,28 @@ class CssFileBuilder implements Builder {
   }
 }
 
+enum _ElementTypeCategory {
+  topLevelVariable, // index = 0
+  classElement, // index = 1
+  other, // index = 2
+}
+
 class _CodeInfo {
+  final _ElementTypeCategory category;
   final String target;
   int line;
   int column;
   String? cssCode;
 
-  _CodeInfo(this.target, this.line, this.column);
+  _CodeInfo(this.category, this.target, this.line, this.column);
 
   factory _CodeInfo.deserialize(Map<String, Object?> json) {
     return _CodeInfo(
+      switch (json['category'] as int) {
+        0 => _ElementTypeCategory.topLevelVariable,
+        1 => _ElementTypeCategory.classElement,
+        _ => _ElementTypeCategory.other,
+      },
       json['target'] as String,
       json['line'] as int,
       json['column'] as int,
@@ -190,7 +206,12 @@ class _CodeInfo {
   }
 
   Map<String, dynamic> serialize() {
-    return {'target': target, 'line': line, 'column': column};
+    return {
+      'category': category.index,
+      'target': target,
+      'line': line,
+      'column': column,
+    };
   }
 }
 
@@ -457,39 +478,70 @@ Stream<_MatchCodeInfo> _matchCodeInfoStream(
   final unit = await buildStep.resolver.compilationUnitFor(inputId);
   final lineInfo = unit.lineInfo;
 
-  // 初始的候選元素: 所有的 `class` 和全域變數
-  // 參考 [GitHub: schultek/jaspr][fn01]
-  final elementList = [...library.topLevelVariables, ...library.classes]
-      .expand<Element>(
-        (e) => switch (e) {
-          final ClassElement e => [...e.fields, ...e.getters],
-          final TopLevelVariableElement e when e.isOriginDeclaration => [e],
-          TopLevelVariableElement(:final getter?) when e.isOriginGetterSetter =>
-            [getter],
-          _ => [],
-        },
-      );
-
   // NOTE:
   // library 只在此處被創建, 因此把 `library.firstFragment.source.fullName` 改為通用的
   // `inputId`.
   final inputLibraryFullPath = '/${inputId.package}/${inputId.path}';
 
-  for (final element in elementList) {
-    final cssFile = _matchCssFileAnnotation(
-      element,
-      checkCssFileType,
-      inputLibraryFullPath,
-    );
-    if (cssFile == null) continue;
-
-    if (!_checkIsValidStyleRule(element, inputLibraryFullPath)) continue;
-
-    final codeInfo = _resolveElement(element, lineInfo);
-    if (codeInfo == null) continue;
-
-    yield _MatchCodeInfo(cssFile.path, codeInfo);
+  // 初始的候選元素: 所有的 `class` 和全域變數
+  // 關於 elementList 是參考 [GitHub: schultek/jaspr][fn01]
+  final elementInfos = [
+    (
+      _ElementTypeCategory.topLevelVariable,
+      library.topLevelVariables.expand<Element>(
+        (e) => switch (e) {
+          final TopLevelVariableElement e when e.isOriginDeclaration => [e],
+          TopLevelVariableElement(:final getter?) when e.isOriginGetterSetter =>
+            [getter],
+          _ => [],
+        },
+      ),
+    ),
+    (
+      _ElementTypeCategory.classElement,
+      library.classes.expand<Element>(
+        (e) => switch (e) {
+          final ClassElement e => [...e.fields, ...e.getters],
+        },
+      ),
+    ),
+  ];
+  for (final (category, elementList) in elementInfos) {
+    for (final element in elementList) {
+      final matchCodeInfo = _matchCodeInfo(
+        category,
+        element,
+        checkCssFileType,
+        lineInfo,
+        inputLibraryFullPath,
+      );
+      if (matchCodeInfo != null) {
+        yield matchCodeInfo;
+      }
+    }
   }
+}
+
+_MatchCodeInfo? _matchCodeInfo(
+  _ElementTypeCategory category,
+  Element element,
+  CheckIsTargetType checkCssFileType,
+  LineInfo lineInfo,
+  String inputLibraryFullPath,
+) {
+  final cssFile = _matchCssFileAnnotation(
+    element,
+    checkCssFileType,
+    inputLibraryFullPath,
+  );
+  if (cssFile == null) return null;
+
+  if (!_checkIsValidStyleRule(element, inputLibraryFullPath)) return null;
+
+  final codeInfo = _resolveElement(category, element, lineInfo);
+  if (codeInfo == null) return null;
+
+  return _MatchCodeInfo(cssFile.path, codeInfo);
 }
 
 /// 以 [checkCssFileType] 方法過濾註解, 並將其還原成 [CssFile].
@@ -586,7 +638,11 @@ bool _checkIsValidStyleRule(Element element, String inputLibraryFullPath) {
 }
 
 // 從 [element] 解析出 [_CodeInfo] 的訊息.
-_CodeInfo? _resolveElement(Element element, LineInfo lineInfo) {
+_CodeInfo? _resolveElement(
+  _ElementTypeCategory category,
+  Element element,
+  LineInfo lineInfo,
+) {
   String targetName;
   if (element.enclosingElement case final ClassElement clazz) {
     targetName = '${clazz.name}.${element.name}';
@@ -604,6 +660,7 @@ _CodeInfo? _resolveElement(Element element, LineInfo lineInfo) {
   final location = lineInfo.getLocation(element.firstFragment.nameOffset ?? 0);
 
   return _CodeInfo(
+    category,
     targetName,
     location.lineNumber,
     location.columnNumber,
