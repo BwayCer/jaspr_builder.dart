@@ -133,7 +133,7 @@ class CssFileBuilder implements Builder {
 
     await for (final _ScheduleResult(:mode, :path, :codeInfos)
         in schedule.plan()) {
-      if (isTest || isActualTest) print('[CssFileBuilder] ${mode.name}, $path');
+      if (isTest || isActualTest) print('[CssFileBuilder] $mode "$path"');
       switch (mode) {
         case _ScheduleMode.read:
           final inputId = dartInputIdMap[path]!;
@@ -141,10 +141,11 @@ class CssFileBuilder implements Builder {
 
           // 反序列化 #2: 取得 CSS 程式碼
           final cssCodes = content.split(_cssSeparator).skip(1).toList();
-          if (isTest)
+          if (isTest) {
             print(
               '[CssFileBuilder] read "$path" content:\n${cssCodes.join('\n')}',
             );
+          }
           schedule.addCssCode(path, cssCodes);
           break;
 
@@ -414,10 +415,10 @@ class _DartToCssSchedule {
         }
         print(
           '[CssFileBuilder] sorting info:\n'
-          '  groups:  ${info.groups}\n'
-          '  associatedList:  ${info.associatedList}\n'
-          '  selfNode:  $groupCount\n'
-          '  otherNode:  $groupExternalCount',
+          '  groups: ${info.groups}\n'
+          '  associatedList: ${info.associatedList}\n'
+          '  selfNode: $groupCount\n'
+          '  otherNode: $groupExternalCount',
         );
       }
     }
