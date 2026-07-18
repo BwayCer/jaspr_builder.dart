@@ -385,40 +385,38 @@ class _DartToCssSchedule {
   void _resolveGroupInfos() {
     final Map<String, _AssociatedGroupInfo> associatedGroupInfoMap = {};
 
+    // 群組配對 並 計算以群組為單位之扣除後的剩餘節點數
     for (final MapEntry(key: cssPath, value: dartPaths)
         in _associatedInfoMap.entries) {
       final signature = dartPaths.join('|');
 
       final info = associatedGroupInfoMap.putIfAbsent(
         signature,
-        () => _AssociatedGroupInfo()..associatedList.addAll(dartPaths),
+        () => _AssociatedGroupInfo()
+          ..associatedList.addAll(dartPaths)
+          ..remainedNodeCount = dartPaths.fold<int>(
+            0,
+            (sum, dartPath) => sum + (_nodeCountInfo['dart_$dartPath'] ?? 0),
+          ),
       );
 
       info.groups.add(cssPath);
+      info.remainedNodeCount -= _nodeCountInfo['css_$cssPath'] ?? 0;
     }
 
-    // 計算以群組為單位之扣除後的剩餘節點數
-    for (final info in associatedGroupInfoMap.values) {
-      var groupExternalCount = 0;
-      for (final dartPath in info.associatedList) {
-        groupExternalCount += _nodeCountInfo['dart_$dartPath'] ?? 0;
-      }
-      for (final cssPath in info.groups) {
-        groupExternalCount -= _nodeCountInfo['css_$cssPath'] ?? 0;
-      }
-      info.remainedNodeCount = groupExternalCount;
-
-      if (isTest) {
-        var groupCount = 0;
+    if (isTest) {
+      for (final info in associatedGroupInfoMap.values) {
+        var selfNodeCount = 0;
         for (final cssPath in info.groups) {
-          groupCount += _nodeCountInfo['css_$cssPath'] ?? 0;
+          selfNodeCount += _nodeCountInfo['css_$cssPath'] ?? 0;
         }
+
         print(
           '[CssFileBuilder] sorting info:\n'
           '  groups: ${info.groups}\n'
           '  associatedList: ${info.associatedList}\n'
-          '  selfNode: $groupCount\n'
-          '  otherNode: $groupExternalCount',
+          '  selfNode: $selfNodeCount\n'
+          '  otherNode: ${info.remainedNodeCount}',
         );
       }
     }
