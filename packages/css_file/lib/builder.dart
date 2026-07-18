@@ -36,7 +36,7 @@ List<String>? _getOutputPaths(BuilderOptions options, String field) {
 /// 用於 `dart run build_runner watch` 的測試開關
 const isActualTest = false;
 
-const cssfileExtension = '.styles.cssfile.txt';
+const _cssfileExtension = '.styles.cssfile.txt';
 
 class CssFileModuleBuilder implements Builder {
   final bool isTest;
@@ -76,7 +76,7 @@ class CssFileModuleBuilder implements Builder {
     );
     if (dartModuleContent == null) return;
 
-    final outputId = inputId.changeExtension(cssfileExtension);
+    final outputId = inputId.changeExtension(_cssfileExtension);
     await buildStep.writeAsString(outputId, dartModuleContent);
   }
 
@@ -113,7 +113,7 @@ class CssFileBuilder implements Builder {
     final dartInputIdMap = <String, AssetId>{};
     final schedule = _DartToCssSchedule(isTest: isTest || isActualTest);
 
-    final assetGlob = Glob('lib/**$cssfileExtension');
+    final assetGlob = Glob('lib/**$_cssfileExtension');
     // 反序列化 #1: 取得 metadata
     await for (final inputId in buildStep.findAssets(assetGlob)) {
       // 只讀取第一行
