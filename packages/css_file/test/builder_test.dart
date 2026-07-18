@@ -1,5 +1,6 @@
 import 'package:build_test/build_test.dart';
 import 'package:test/test.dart';
+import 'package:logging/logging.dart';
 
 import 'package:jaspr_css_file_builder/builder.dart';
 
@@ -278,6 +279,138 @@ void main() {
     });
   });
 
+  Future<TestBuilderResult> createCorrectStep2({
+    void Function(LogRecord)? onLog,
+  }) {
+    return testBuilder(
+      // 帶入要測試的通用 Builder
+      CssFileBuilder(
+        outputPaths: [
+          'styles/ca.css',
+          'styles/cb.css',
+          'styles/cc.css',
+          'styles/cd.css',
+        ],
+        isTest: true,
+      ),
+
+      // 模擬虛擬檔案系統中的輸入檔案
+      {
+        ...dependencies,
+
+        'my_project|lib/da.styles.cssfile.txt': trimIndent('            ', '''
+            {"path":"package:jaspr_web/da.dart","cssPaths":["styles/ca.css"],"infosList":[[{"category":1,"target":"styleA1","line":10,"column":5},{"category":1,"target":"styleA2","line":11,"column":5},{"category":1,"target":"styleA3","line":12,"column":5},{"category":1,"target":"styleA4","line":13,"column":5},{"category":1,"target":"styleA5","line":14,"column":5}]]}
+            ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
+              content: "da-1";
+            }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
+              content: "da-2";
+            }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
+              content: "da-3";
+            }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
+              content: "da-4";
+            }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
+              content: "da-5";
+            }
+          '''),
+
+        'my_project|lib/db.styles.cssfile.txt': trimIndent('            ', '''
+            {"path":"package:jaspr_web/db.dart","cssPaths":["styles/cb.css","styles/cc.css"],"infosList":[[{"category":1,"target":"styleB6","line":15,"column":5}],[{"category":1,"target":"styleC7","line":5,"column":5}]]}
+            ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cb {
+              content: "db-1";
+            }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
+              content: "db-2";
+            }
+          '''),
+
+        'my_project|lib/dc.styles.cssfile.txt': trimIndent('            ', '''
+            {"path":"package:jaspr_web/dc.dart","cssPaths":["styles/cc.css","styles/cd.css"],"infosList":[[{"category":1,"target":"styleC8","line":2,"column":5}],[{"category":1,"target":"styleD9","line":18,"column":5},{"category":1,"target":"styleD10","line":30,"column":5}]]}
+            ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
+              content: "dc-1";
+            }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cd {
+              content: "dc-2";
+            }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cd {
+              content: "dc-3";
+            }
+          '''),
+
+        'my_project|lib/dd.styles.cssfile.txt': trimIndent('            ', '''
+            {"path":"package:jaspr_web/dd.dart","cssPaths":["styles/cc.css"],"infosList":[[{"category":1,"target":"styleC11","line":32,"column":5}]]}
+            ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
+              content: "dd-1";
+            }
+          '''),
+
+        'my_project|lib/de.styles.cssfile.txt': trimIndent('            ', '''
+            {"path":"package:jaspr_web/De.dart","cssPaths":["styles/cc.css"],"infosList":[[{"category":1,"target":"styleC12","line":50,"column":5}]]}
+            ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
+              content: "de-1";
+            }
+          '''),
+      },
+
+      outputs: {
+        'my_project|web/styles/ca.css': trimIndent('            ', '''
+            /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
+
+            .ca {
+              content: "da-1";
+            }
+            .ca {
+              content: "da-2";
+            }
+            .ca {
+              content: "da-3";
+            }
+            .ca {
+              content: "da-4";
+            }
+            .ca {
+              content: "da-5";
+            }
+          '''),
+
+        'my_project|web/styles/cb.css': trimIndent('            ', '''
+            /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
+
+            .cb {
+              content: "db-1";
+            }
+          '''),
+
+        'my_project|web/styles/cc.css': trimIndent('            ', '''
+            /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
+
+            .cc {
+              content: "db-2";
+            }
+            .cc {
+              content: "dc-1";
+            }
+            .cc {
+              content: "dd-1";
+            }
+            .cc {
+              content: "de-1";
+            }
+          '''),
+
+        'my_project|web/styles/cd.css': trimIndent('            ', '''
+            /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
+
+            .cd {
+              content: "dc-2";
+            }
+            .cd {
+              content: "dc-3";
+            }
+          '''),
+      },
+
+      rootPackage: 'my_project',
+      onLog: onLog,
+    );
+  }
+
   group('兩步驟 Builder 測試:', () {
     test('CSS 路徑數量與程式碼資訊數量不相等時給予 log 警告', () async {
       final logs = <String>[];
@@ -359,6 +492,87 @@ void main() {
           contains(
             'Multi-build conversion failed (package:jaspr_web/da.dart):'
             ' CSS code data lost.',
+          ),
+        ),
+      );
+    });
+
+    test('檢查排程是否符合預期', () async {
+      final logs = <String>[];
+
+      await createCorrectStep2(
+        onLog: (logRecord) {
+          logs.add(logRecord.message);
+        },
+      );
+
+      String getSortingInfo(
+        List<String> groups,
+        List<String> associatedList,
+        int selfNode,
+        int otherNode,
+      ) {
+        return '[CssFileBuilder] sorting info:\n'
+            '  groups: $groups\n'
+            '  associatedList: $associatedList\n'
+            '  selfNode: $selfNode\n'
+            '  otherNode: $otherNode';
+      }
+
+      expect(
+        logs,
+        anyElement(
+          contains(
+            getSortingInfo(
+              ['styles/ca.css'],
+              ['package:jaspr_web/da.dart'],
+              5,
+              0,
+            ),
+          ),
+        ),
+      );
+      expect(
+        logs,
+        anyElement(
+          contains(
+            getSortingInfo(
+              ['styles/cb.css'],
+              ['package:jaspr_web/db.dart'],
+              1,
+              1,
+            ),
+          ),
+        ),
+      );
+      expect(
+        logs,
+        anyElement(
+          contains(
+            getSortingInfo(
+              ['styles/cc.css'],
+              [
+                'package:jaspr_web/db.dart',
+                'package:jaspr_web/dc.dart',
+                'package:jaspr_web/dd.dart',
+                'package:jaspr_web/De.dart',
+              ],
+              4,
+              3,
+            ),
+          ),
+        ),
+      );
+      expect(
+        logs,
+        anyElement(
+          contains(
+            getSortingInfo(
+              ['styles/cd.css'],
+              ['package:jaspr_web/dc.dart'],
+              2,
+              1,
+            ),
           ),
         ),
       );
@@ -462,147 +676,7 @@ void main() {
     });
 
     test('第二步 Builder: 把各個 Dart 生成的內容組合成 CSS', () async {
-      await testBuilder(
-        // 帶入要測試的通用 Builder
-        CssFileBuilder(
-          outputPaths: [
-            'styles/ca.css',
-            'styles/cb.css',
-            'styles/cc.css',
-            'styles/cd.css',
-          ],
-          isTest: true,
-        ),
-
-        // 模擬虛擬檔案系統中的輸入檔案
-        {
-          ...dependencies,
-
-          'my_project|lib/da.styles.cssfile.txt': trimIndent(
-            '              ',
-            '''
-              {"path":"package:jaspr_web/da.dart","cssPaths":["styles/ca.css"],"infosList":[[{"category":1,"target":"styleA1","line":10,"column":5},{"category":1,"target":"styleA2","line":11,"column":5},{"category":1,"target":"styleA3","line":12,"column":5},{"category":1,"target":"styleA4","line":13,"column":5},{"category":1,"target":"styleA5","line":14,"column":5}]]}
-              ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
-                content: "da-1";
-              }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
-                content: "da-2";
-              }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
-                content: "da-3";
-              }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
-                content: "da-4";
-              }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.ca {
-                content: "da-5";
-              }
-            ''',
-          ),
-
-          'my_project|lib/db.styles.cssfile.txt': trimIndent(
-            '              ',
-            '''
-              {"path":"package:jaspr_web/db.dart","cssPaths":["styles/cb.css","styles/cc.css"],"infosList":[[{"category":1,"target":"styleB6","line":15,"column":5}],[{"category":1,"target":"styleC7","line":5,"column":5}]]}
-              ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cb {
-                content: "db-1";
-              }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
-                content: "db-2";
-              }
-            ''',
-          ),
-
-          'my_project|lib/dc.styles.cssfile.txt': trimIndent(
-            '              ',
-            '''
-              {"path":"package:jaspr_web/dc.dart","cssPaths":["styles/cc.css","styles/cd.css"],"infosList":[[{"category":1,"target":"styleC8","line":2,"column":5}],[{"category":1,"target":"styleD9","line":18,"column":5},{"category":1,"target":"styleD10","line":30,"column":5}]]}
-              ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
-                content: "dc-1";
-              }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cd {
-                content: "dc-2";
-              }===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cd {
-                content: "dc-3";
-              }
-            ''',
-          ),
-
-          'my_project|lib/dd.styles.cssfile.txt': trimIndent(
-            '              ',
-            '''
-              {"path":"package:jaspr_web/dd.dart","cssPaths":["styles/cc.css"],"infosList":[[{"category":1,"target":"styleC11","line":32,"column":5}]]}
-              ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
-                content: "dd-1";
-              }
-            ''',
-          ),
-
-          'my_project|lib/de.styles.cssfile.txt': trimIndent(
-            '              ',
-            '''
-              {"path":"package:jaspr_web/De.dart","cssPaths":["styles/cc.css"],"infosList":[[{"category":1,"target":"styleC12","line":50,"column":5}]]}
-              ===CSS_SEPARATOR_FOR_BUILD_RUNNER===.cc {
-                content: "de-1";
-              }
-            ''',
-          ),
-        },
-
-        outputs: {
-          'my_project|web/styles/ca.css': trimIndent('              ', '''
-              /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
-
-              .ca {
-                content: "da-1";
-              }
-              .ca {
-                content: "da-2";
-              }
-              .ca {
-                content: "da-3";
-              }
-              .ca {
-                content: "da-4";
-              }
-              .ca {
-                content: "da-5";
-              }
-            '''),
-
-          'my_project|web/styles/cb.css': trimIndent('              ', '''
-              /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
-
-              .cb {
-                content: "db-1";
-              }
-            '''),
-
-          'my_project|web/styles/cc.css': trimIndent('              ', '''
-              /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
-
-              .cc {
-                content: "db-2";
-              }
-              .cc {
-                content: "dc-1";
-              }
-              .cc {
-                content: "dd-1";
-              }
-              .cc {
-                content: "de-1";
-              }
-            '''),
-
-          'my_project|web/styles/cd.css': trimIndent('              ', '''
-              /* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */
-
-              .cd {
-                content: "dc-2";
-              }
-              .cd {
-                content: "dc-3";
-              }
-            '''),
-        },
-
-        rootPackage: 'my_project',
-      );
+      await createCorrectStep2();
     });
 
     test('第二步 Builder: 全域生成的 CSS 排序放於 Class 生成的 CSS', () async {
