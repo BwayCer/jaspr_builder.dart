@@ -173,7 +173,7 @@ class CssFileBuilder implements Builder {
               .whereType<String>()
               .join('\n');
           final cssContent =
-              '/* AUTOMATICALLY GENERATED. DO NOT EDIT MANUALLY. */'
+              '/* GENERATED CODE - DO NOT MODIFY BY HAND */'
               '\n\n$cssCode';
 
           final outputId = AssetId(buildStep.inputId.package, 'web/$path');
