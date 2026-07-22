@@ -3,7 +3,7 @@ Jaspr `@CssFile` Builder
 
 A compile-time static CSS generator designed specifically for the [Jaspr](https://github.com/schultek/jaspr) web framework.
 
-Convert component style rules from Jaspr Dart into standalone CSS files.
+Convert the `styleRules` definition component styles in the Jaspr Dart code into a standalone CSS file.
 
 專為 [Jaspr](https://github.com/schultek/jaspr) Web 框架設計的編譯時靜態 CSS 生成器。
 

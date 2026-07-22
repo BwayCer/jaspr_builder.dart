@@ -8,7 +8,7 @@ const appCssFile = CssFile('styles/app.css');
 
 // NOTE:
 // Need to sync and allow this path in build.yaml
-// ```dart
+// ```yml
 // targets:
 //   $default:
 //     builders:

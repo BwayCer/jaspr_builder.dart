@@ -55,7 +55,7 @@ jaspr_web
     }
     ```
 
-  - 外部外部專案的 CSS 文件
+  - 外部專案的 CSS 文件
 
     ```dart
     // ./lib/app.dart
