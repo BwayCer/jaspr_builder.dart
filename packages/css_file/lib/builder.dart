@@ -47,23 +47,30 @@ class CssFileModuleBuilder implements Builder {
   // 只在有變動時才更新, 且引用本文件的也會一起更新.
   @override
   Map<String, List<String>> buildExtensions = {
-    r'.dart': ['.styles.cssfile.txt'],
+    r'.dart': [_cssfileExtension],
   };
 
   @override
   Future<void> build(BuildStep buildStep) async {
     final inputId = buildStep.inputId;
 
+    if (!await buildStep.resolver.isLibrary(inputId)) return;
+
+    final library = await buildStep.resolver.libraryFor(inputId);
+    final unit = await buildStep.resolver.compilationUnitFor(inputId);
+    final lineInfo = unit.lineInfo;
+
     final dartModule = _DartModule(inputId.uri.toString());
 
     if (isActualTest) print('[CssFileModuleBuilder] read ${dartModule.path}');
-    final matchCodeInfoStream = _matchCodeInfoStream(
-      buildStep,
+    final matchCodeInfoIterable = _matchCodeInfoIterable(
       inputId,
+      library,
+      lineInfo,
       _checkCssFileType,
     );
-    await for (final _MatchCodeInfo(:cssFilePath, :codeInfo)
-        in matchCodeInfoStream) {
+    for (final _MatchCodeInfo(:cssFilePath, :codeInfo)
+        in matchCodeInfoIterable) {
       dartModule.add(cssFilePath, codeInfo);
     }
 
@@ -131,8 +138,7 @@ class CssFileBuilder implements Builder {
       schedule.addDartModule(dartModule);
     }
 
-    await for (final _ScheduleResult(:mode, :path, :codeInfos)
-        in schedule.plan()) {
+    for (final _ScheduleResult(:mode, :path, :codeInfos) in schedule.plan()) {
       if (isTest || isActualTest) print('[CssFileBuilder] $mode "$path"');
       switch (mode) {
         case _ScheduleMode.read:
@@ -430,7 +436,7 @@ class _DartToCssSchedule {
 
   var _isFirstRun = true;
 
-  Stream<_ScheduleResult> plan() async* {
+  Iterable<_ScheduleResult> plan() sync* {
     if (_isFirstRun) {
       _isFirstRun = false;
       _resolveGroupInfos();
@@ -466,17 +472,12 @@ class _MatchCodeInfo {
 /// 以 [checkCssFileType] 方法過濾註解, 找到指定元素.
 /// 把註解還原 [CssFile] 並取出 [_MatchCodeInfo.cssFilePath] 輸出路徑.
 /// 解析元素給出 [_CodeInfo].
-Stream<_MatchCodeInfo> _matchCodeInfoStream(
-  BuildStep buildStep,
+Iterable<_MatchCodeInfo> _matchCodeInfoIterable(
   AssetId inputId,
+  LibraryElement library,
+  LineInfo lineInfo,
   CheckIsTargetType checkCssFileType,
-) async* {
-  if (!await buildStep.resolver.isLibrary(inputId)) return;
-
-  final library = await buildStep.resolver.libraryFor(inputId);
-  final unit = await buildStep.resolver.compilationUnitFor(inputId);
-  final lineInfo = unit.lineInfo;
-
+) sync* {
   // NOTE:
   // library 只在此處被創建, 因此把 `library.firstFragment.source.fullName` 改為通用的
   // `inputId`.
